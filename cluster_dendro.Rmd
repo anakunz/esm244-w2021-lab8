@@ -1,0 +1,236 @@
+---
+title: "Cluster& dendrographs"
+author: "Anastasia Kunz"
+date: "3/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(here)
+library(janitor)
+library(palmerpenguins)
+library(NbClust)
+library(cluster)
+library(factoextra)
+library(dendextend)
+library(ggdendro)
+```
+
+
+## Intro to cluster analysis (k means and heirarchical)
+
+### Part 1: K means
+
+Practice k means cluster through penguins dataset
+
+#### exploratory visualization:
+
+map species onto point color -> look for opportunitiy to cluster
+
+```{r}
+#bill length vs depth plot
+
+ggplot(penguins)+
+  geom_point(aes(x = bill_length_mm,
+                 y = bill_depth_mm,
+                 color = species,
+                 shape = sex),
+             size = 3,
+             alpha = .7)+
+  scale_color_manual(values = c("orange", "cyan4", "darkmagenta"))
+
+#flip length vs body mass
+ggplot(penguins) +
+  geom_point(aes(x = flipper_length_mm, 
+                 y = body_mass_g, 
+                 color = species,
+                 shape = sex),
+             size = 3,
+             alpha = 0.7) +
+  scale_color_manual(values = c("orange","cyan4","darkmagenta"))
+```
+
+#### pick the number of clusters
+
+in lect, learned that for k means clustering, you need to pick the number of clusters *a priori* or before hand. R does have some tools to help but should use judgment 
+
+Here we use NbClust() function which provides 30 indices for determining the number of clusters and proposes to the user the best clustering scheme 
+
+basically its running 30 diff ways of evaluating how many clusters it thinks exists and then tell us the breakdown of what they decide: ex: 8 algorithms think that there should be 4 clusters
+
+we are using just four vars from the penguins data (why there is [3:6]). also specify the min and max number of clusters we want 
+
+```{r}
+# how many clusters do you think there should be?
+number_est <- NbClust(penguins[3:6], min.nc = 2, max.nc = 10, method = "kmeans")
+
+# look at results
+number_est
+
+
+```
+
+
+ By these estimators, 2 is identified as the best number of clusters by the largest number of algorithms (8 / 30)...but should that change our mind? Maybe...but here I think it makes sense to still stick with 3 (a cluster for each species) and see how it does.
+ 
+### Create a complete scaled version of the data 
+ 
+ we are still going to use 3 clusters and see how it goes
+ but adelie and chinstrap are pretty similar so makes kinda sense
+ 
+ we are going to use complete cases - for vars we're using to perform kmeans clustering on penguins (bill length and dpeth, flip length and mass) we are dropping any obsv (row) where they are missing. Might not be best method for every scenario, where lots of data are msising tho
+ 
+```{r}
+# drop rows where any of the four measurements are NA
+penguins_complete <- penguins %>% 
+  drop_na(bill_length_mm, bill_depth_mm, body_mass_g, flipper_length_mm)
+
+#only keep column names for the four size measurements, then scale them 
+penguins_scale <- penguins_complete %>% 
+   select(ends_with("mm"), body_mass_g) %>% 
+  scale()
+```
+ 
+# Run k means 
+
+now that we have complete scaled data for the four size variables of interest, lets run k means. you should know the iterative process from week 8 lect
+
+```{r}
+penguins_km <- kmeans(penguins_scale, 3) #kmeans specifying 3 groups to start
+```
+
+
+```{r}
+#see what it returns (diff elements returned by kmeans function)
+penguins_km$size # how many obsv assigned to each cluster
+penguins_km$cluster # what cluster each obsv in penguins_scale is assigned to
+
+#bind the cluster number to the og data used for clustering so we can see what cluster each penguin is assigned to 
+penguins_cl <- data.frame(penguins_complete, cluster_no = factor(penguins_km$cluster))
+
+#plot flip length vs body mass indicating which cluster each penguin is assigned to, also showing the actual species
+
+ggplot(penguins_cl)+
+  geom_point(aes(x = flipper_length_mm,
+                 y = body_mass_g,
+                 color = cluster_no,
+                 shape = species))
+
+```
+
+
+```{r}
+ggplot(penguins_cl)+
+  geom_point(aes(x = bill_length_mm,
+                 y = bill_depth_mm,
+                 color = cluster_no,
+                 shape = species))
+```
+
+
+find actual counts:
+
+```{r}
+penguins_cl %>% 
+  count(species, cluster_no) %>% 
+  pivot_wider(names_from = cluster_no, values_from = n) %>% 
+  rename("Cluster 1" = "1", "Cluster 2" = "2", "Cluster 3" = "3")
+```
+ did pretty well!
+ 
+### Part 2: cluster anlaysis hierarchical
+
+heirarchical cluster analysis and make dendrograms
+
+use stats::hclust() function 
+
+read in data and simplify:
+```{r}
+wb_env <- read_csv("wb_env.csv")
+
+#only keep top 20 ghg emitters
+wb_ghg_20 <- wb_env %>% 
+  arrange(-ghg) %>% 
+  head(20)
+
+```
+
+scale data:
+
+```{r}
+wb_scaled <- wb_ghg_20 %>% 
+  select(3:7) %>% 
+  scale()
+
+#update to add rownames - country names from wb ghg_20
+
+rownames(wb_scaled) <- wb_ghg_20$name
+
+
+```
+
+
+### find the euclidean distances
+
+stats::dist() function 
+```{r}
+euc_distance <- dist(wb_scaled, method ="euclidean")
+```
+
+note you can mannually create the dendrogram like in lect from the distances but there are other tools in r to use that take less time :)
+
+## perform heirarchical clustering by complete linkage with stat::hclust()
+
+this funct performs heirarch clust given a dissimilarity matrix using linkage that you specify
+
+here we use complete linkage (remember the onle that selects the smallest maximum distance between two obsv)
+
+```{r}
+#heirarch clust by complete linkage
+
+hc_complete <- hclust(euc_distance, method = "complete")
+
+plot(hc_complete, cex = 0.6, hang = -1)
+```
+
+```{r}
+hc_single <- hclust(euc_distance, method = "single")
+
+plot(hc_single, cex = 0.6, hang = -1)
+```
+
+### Make a tanglegram to compare dendrograms
+
+lets make a tangelgram to compare clustering by complete and single linkage
+
+wel use the dendextend :: tanglegram() funct to make it
+
+convert to class dendrogram then combin them into a list
+
+
+```{r}
+
+# convert to class dendrogram
+dend_complete <-as.dendrogram(hc_complete)
+dend_simple <- as.dendrogram(hc_single)
+
+```
+
+now we can make a tanglegram
+
+```{r}
+tanglegram(dend_complete, dend_simple)
+```
+
+Plot with ggplot instead!
+
+```{r}
+ggdendrogram(hc_complete, rotate = TRUE)+
+  theme_minimal()+
+  labs( x = "Country")
+```
+
+
